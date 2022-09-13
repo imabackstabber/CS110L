@@ -27,6 +27,8 @@ fn pick_a_random_word() -> String {
     String::from(words[rand::thread_rng().gen_range(0, words.len())].trim())
 }
 
+use std::collections::HashMap;
+
 fn main() {
     let secret_word = pick_a_random_word();
     // Note: given what you know about Rust so far, it's easier to pull characters out of a
@@ -34,7 +36,63 @@ fn main() {
     // secret_word by doing secret_word_chars[i].
     let secret_word_chars: Vec<char> = secret_word.chars().collect();
     // Uncomment for debugging:
-    // println!("random word: {}", secret_word);
+    println!("random word: {}", secret_word);
 
     // Your code here! :)
+    let mut books:HashMap<char, Vec<u32>> = HashMap::new();
+    let mut string_showed = vec![];
+    let mut string_guesses = vec![];
+    for i in 0..secret_word_chars.len() {
+        if books.contains_key(&secret_word_chars[i]){
+            let v = books.get_mut(&secret_word_chars[i]).unwrap();
+            v.push(i as u32);
+        } else{
+            books.insert(secret_word_chars[i],vec![i as u32]);
+        }
+        string_showed.push(0); // Push invalid flags
+    }   
+    let mut counter = 0;
+    loop {
+        if counter == NUM_INCORRECT_GUESSES {
+            println!("Sorry, you ran out of guesses!");
+            break;
+        }
+        if books.len() == 0 {
+            println!("Congratulations you guessed the secret word: {}!",secret_word);
+            break;
+        }
+        print!("The word so far is ");
+        for i in 0..secret_word_chars.len() {
+            if string_showed[i] == 0 {
+                print!("-");
+            } else{
+                print!("{}",secret_word_chars[i]);
+            }
+        }
+        println!("");
+        print!("You have guessed the following letters: ");
+        for i in 0..string_guesses.len() {
+            print!("{}", string_guesses[i]);
+        }
+        println!("");
+        println!("You have {} guesses left", NUM_INCORRECT_GUESSES - counter);
+        print!("Please guess a letter: ");
+        io::stdout().flush().expect("Error flushing stdout.");
+        let mut guesses = String::new();
+        io::stdin().read_line(&mut guesses).expect("Error reading line.");
+        // extra: is it a char?
+        let guesses = guesses.chars().collect::<Vec<char>>()[0];
+        string_guesses.push(guesses);
+        if !books.contains_key(&guesses){
+            println!("Sorry, that letter is not in the word");
+            counter += 1;
+        } else{
+            let v = books.get_mut(&guesses).unwrap();
+            for idx in v {
+                string_showed[*idx as usize] = 1;
+            }
+            books.remove(&guesses);
+        }
+        println!("");
+    }
 }
