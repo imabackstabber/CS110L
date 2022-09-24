@@ -29,7 +29,11 @@ fn main() {
 
 
     // If you implement iterator trait:
-    //for val in &list {
-    //    println!("{}", val);
-    //}
+    for val in &list {
+       println!("{}", val);
+    }
+    for val in list{ // It will take ownership
+       println!("{}", val);
+    }
+    // list.get_size(); // This will cause error
 }

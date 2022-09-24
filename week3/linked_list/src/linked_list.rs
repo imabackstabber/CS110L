@@ -87,6 +87,40 @@ impl<T> PartialEq for Node<T>
     }
 }
 
+pub struct LinkedListIter<'a,T> {
+    current: &'a Option<Box<Node<T>>>,
+}
+
+
+impl<T: Copy> Iterator for LinkedListIter<'_,T> {
+    type Item = T;
+    fn next(&mut self) -> Option<T> {
+        match self.current {
+            Some(node) => {
+                // YOU FILL THIS IN!
+                self.current = &node.next;
+                Some(node.value)
+            },
+            None => None
+        }
+    }
+}
+
+impl<'a,T: Copy> IntoIterator for &'a LinkedList<T> {
+    type Item = T;
+    type IntoIter = LinkedListIter<'a,T>;
+    fn into_iter(self) -> LinkedListIter<'a,T> {
+        LinkedListIter {current: &self.head}
+    }
+}
+
+impl<T> Iterator for LinkedList<T>{
+    type Item = T;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.pop_front()
+    }
+}
+
 impl<T> Clone for LinkedList<T>
     where T:Copy
 {
