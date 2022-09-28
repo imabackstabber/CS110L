@@ -1,6 +1,6 @@
 use crate::debugger_command::DebuggerCommand;
 use crate::inferior::Inferior;
-use nix::sys::wait::waitpid;
+use crate::dwarf_data::{DwarfData, Error as DwarfError};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use crate::inferior::Status;
@@ -10,12 +10,24 @@ pub struct Debugger {
     history_path: String,
     readline: Editor<()>,
     inferior: Option<Inferior>,
+    debug_data: DwarfData,
 }
 
 impl Debugger {
     /// Initializes the debugger.
     pub fn new(target: &str) -> Debugger {
         // TODO (milestone 3): initialize the DwarfData
+        let debug_data = match DwarfData::from_file(target) {
+            Ok(val) => val,
+            Err(DwarfError::ErrorOpeningFile) => {
+                println!("Could not open file {}", target);
+                std::process::exit(1);
+            }
+            Err(DwarfError::DwarfFormatError(err)) => {
+                println!("Could not debugging symbols from {}: {:?}", target, err);
+                std::process::exit(1);
+            }
+        };
 
         let history_path = format!("{}/.deet_history", std::env::var("HOME").unwrap());
         let mut readline = Editor::<()>::new();
@@ -27,6 +39,7 @@ impl Debugger {
             history_path,
             readline,
             inferior: None,
+            debug_data
         }
     }
 
@@ -59,6 +72,9 @@ impl Debugger {
                                     }
                                     Status::Stopped(_signal,_rip) => {
                                         println!("Child stopped (signal {:?})",_signal);
+                                        if let Some(rip_line) = self.debug_data.get_line_from_addr(_rip){
+                                            println!("Stopped at {}:{}",rip_line.file, rip_line.number);
+                                        }
                                     }
                                     _ => {
                                         println!("Child send unknown information");
@@ -110,6 +126,13 @@ impl Debugger {
                                 println!("Child continue makes error:{:?}", e);
                             }
                         }
+                    }
+                }
+                DebuggerCommand::Back => {
+                    if let None = self.inferior{
+                        println!("Err: no process is running yet");
+                    } else {
+                        self.inferior.as_mut().unwrap().backtrace(&self.debug_data);
                     }
                 }
             }

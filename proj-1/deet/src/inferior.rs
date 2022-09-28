@@ -1,6 +1,7 @@
 use nix::sys::ptrace;
 use nix::sys::signal;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use crate::dwarf_data::{DwarfData, Error as DwarfError};
 use nix::unistd::Pid;
 use std::process::Child;
 use std::process::Command;
@@ -64,6 +65,36 @@ impl Inferior {
     /// Returns the pid of this inferior.
     pub fn pid(&self) -> Pid {
         nix::unistd::Pid::from_raw(self.child.id() as i32)
+    }
+
+    pub fn backtrace(&self, debug_data:&DwarfData) {
+        let regs = ptrace::getregs(self.pid()).unwrap();
+        let mut rip = regs.rip as usize;
+        let mut rbp = regs.rbp as usize;
+        loop{
+            // 1. print function/line number for instruction_ptr
+            let rip_line = match debug_data.get_line_from_addr(rip){
+                Some(v) => v,
+                None => {
+                    println!("there is no call stack yet");
+                    continue;
+                }
+            };
+            let rip_func = match debug_data.get_function_from_addr(rip){
+                Some(v) => v,
+                None => {
+                    println!("there is no call stack yet");
+                    continue;
+                }
+            };
+            println!("{} ({:?}:{})", rip_func, rip_line.file, rip_line.number);
+            // 2. compare and quit
+            if rip_func == "main"{
+                break
+            }
+            rip = ptrace::read(self.pid(), (rbp + 8) as ptrace::AddressType).unwrap() as usize;
+            rbp = ptrace::read(self.pid(), rbp as ptrace::AddressType).unwrap() as usize;
+        }
     }
 
     /// Calls waitpid on this inferior and returns a Status to indicate the state of the process
