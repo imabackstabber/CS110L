@@ -6,6 +6,7 @@ use nix::unistd::Pid;
 use std::process::Child;
 use std::process::Command;
 use std::os::unix::process::CommandExt;
+use std::mem::size_of;
 
 #[derive(Debug)]
 pub enum Status {
@@ -30,20 +31,51 @@ fn child_traceme() -> Result<(), std::io::Error> {
     )))
 }
 
+const INT_CODE:u8 = 0xcc as u8;
+
+#[derive(Debug)]
 pub struct Inferior {
     child: Child,
 }
 
+fn _align_addr_to_word(addr: usize) -> usize {
+    addr & (-(size_of::<usize>() as isize) as usize)
+}
+
 impl Inferior {
+    fn write_byte(&mut self, addr: usize, val: u8) -> Result<u8, nix::Error> {
+        let aligned_addr = _align_addr_to_word(addr);
+        let byte_offset = addr - aligned_addr;
+        let word = ptrace::read(self.pid(), aligned_addr as ptrace::AddressType)? as u64;
+        let orig_byte = (word >> 8 * byte_offset) & 0xff;
+        let masked_word = word & !(0xff << 8 * byte_offset);
+        let updated_word = masked_word | ((val as u64) << 8 * byte_offset);
+        ptrace::write(
+            self.pid(),
+            aligned_addr as ptrace::AddressType,
+            updated_word as *mut std::ffi::c_void,
+        )?;
+        Ok(orig_byte as u8)
+    }
+
+    pub fn append_breakpoint(&mut self, addr:usize) -> Result<u8, nix::Error>{
+        return self.write_byte(addr,INT_CODE);
+    }
     /// Attempts to start a new inferior process. Returns Some(Inferior) if successful, or None if
     /// an error is encountered.
-    pub fn new(target: &str, args: &Vec<String>) -> Option<Inferior> {
+    pub fn new(target: &str, args: &Vec<String>, breakpoints:&Vec<usize>) -> Option<Inferior> {
         let mut _binding = Command::new(target);
         let cmd = _binding.args(args);
         unsafe { cmd.pre_exec(child_traceme);}
         let child = cmd.spawn().ok()?;
-        let res = Inferior{child};
+        let mut res = Inferior{child};
         if res.wait(Some(WaitPidFlag::WSTOPPED)).is_ok(){
+            for (i,brk) in breakpoints.iter().enumerate(){
+                if let Err(_) = Inferior::write_byte(&mut res, *brk, INT_CODE){
+                    println!("Error when injecting breakpoint {}",i);
+                    return None;
+                }
+            }
             Some(res)
         }else {
             None

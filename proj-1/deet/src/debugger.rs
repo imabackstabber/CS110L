@@ -11,6 +11,16 @@ pub struct Debugger {
     readline: Editor<()>,
     inferior: Option<Inferior>,
     debug_data: DwarfData,
+    breakpoints: Vec<usize>,
+}
+
+fn _parse_address(addr: &str) -> Option<usize> {
+    let addr_without_0x = if addr.to_lowercase().starts_with("0x") {
+        &addr[2..]
+    } else {
+        &addr
+    };
+    usize::from_str_radix(addr_without_0x, 16).ok()
 }
 
 impl Debugger {
@@ -33,13 +43,46 @@ impl Debugger {
         let mut readline = Editor::<()>::new();
         // Attempt to load history from ~/.deet_history if it exists
         let _ = readline.load_history(&history_path);
+        // Print debuging data
+        debug_data.print();
 
         Debugger {
             target: target.to_string(),
+            breakpoints: vec![],
             history_path,
             readline,
             inferior: None,
-            debug_data
+            debug_data,
+        }
+    }
+
+    pub fn reset(&mut self){
+        self.inferior = None;
+        self.breakpoints = vec![];
+    }
+
+    pub fn match_res(&mut self, res: Result<Status,nix::Error>){
+        match res {
+            Ok(v) => {
+                match v {
+                    Status::Exited(_status_code) => {
+                        self.reset(); // to make kill normal
+                        println!("Child exited (status {})",_status_code);
+                    }
+                    Status::Stopped(_signal,_rip) => {
+                        println!("Child stopped (signal {:?})",_signal);
+                        if let Some(rip_line) = self.debug_data.get_line_from_addr(_rip){
+                            println!("Stopped at {}:{}",rip_line.file, rip_line.number);
+                        }
+                    }
+                    _ => {
+                        println!("Child send unknown information");
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Child continue makes error:{:?}", e);
+            }
         }
     }
 
@@ -54,37 +97,16 @@ impl Debugger {
                             .unwrap()
                             .kill();
                         //2. finally clean it
-                        self.inferior = None
+                        self.reset();
                     }
-                    if let Some(inferior) = Inferior::new(&self.target, &args) {
+                    if let Some(inferior) = Inferior::new(&self.target, &args, &self.breakpoints) {
                         // Create the inferior
                         self.inferior = Some(inferior);
                         // TODO (milestone 1): make the inferior run
                         // You may use self.inferior.as_mut().unwrap() to get a mutable reference
                         // to the Inferior object
                         let cont_res = self.inferior.as_mut().unwrap().cont();
-                        match cont_res {
-                            Ok(v) => {
-                                match v {
-                                    Status::Exited(_status_code) => {
-                                        self.inferior = None; // to make kill normal
-                                        println!("Child exited (status {})",_status_code);
-                                    }
-                                    Status::Stopped(_signal,_rip) => {
-                                        println!("Child stopped (signal {:?})",_signal);
-                                        if let Some(rip_line) = self.debug_data.get_line_from_addr(_rip){
-                                            println!("Stopped at {}:{}",rip_line.file, rip_line.number);
-                                        }
-                                    }
-                                    _ => {
-                                        println!("Child send unknown information");
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                println!("Child continue makes error:{:?}", e);
-                            }
-                        }
+                        self.match_res(cont_res);
                     } else {
                         println!("Error starting subprocess");
                     }
@@ -92,12 +114,13 @@ impl Debugger {
                 DebuggerCommand::Quit => {
                     if self.inferior.is_some(){
                         //1. first kill n reap it
+                        println!("self.infer is {:?}",self.inferior);
                         self.inferior
                             .as_mut()
                             .unwrap()
                             .kill();
                         //2. finally clean it
-                        self.inferior = None
+                        self.reset();
                     }
                     return;
                 }
@@ -108,24 +131,7 @@ impl Debugger {
                     } else{
                         // 2. resume the child
                         let my_continue_res = self.inferior.as_mut().unwrap().cont();
-                        match my_continue_res {
-                            Ok(v) => {
-                                match v {
-                                    Status::Exited(_status_code) => {
-                                        println!("Child exited (status {})",_status_code);
-                                    }
-                                    Status::Stopped(_signal,_rip) => {
-                                        println!("Child stopped (signal {:?})",_signal);
-                                    }
-                                    _ => {
-                                        println!("Child send unknown information");
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                println!("Child continue makes error:{:?}", e);
-                            }
-                        }
+                        self.match_res(my_continue_res);
                     }
                 }
                 DebuggerCommand::Back => {
@@ -133,6 +139,28 @@ impl Debugger {
                         println!("Err: no process is running yet");
                     } else {
                         self.inferior.as_mut().unwrap().backtrace(&self.debug_data);
+                    }
+                }
+                DebuggerCommand::BreakPoint(args) => {
+                    if args.len() > 1{
+                        println!("<usage>: b/break *addr");
+                    } else{
+                        let addr = &args[0];
+                        if addr.starts_with("*"){
+                            if let Some(parse_res) = _parse_address(&addr[1..]){
+                                println!("Set breakpoint {} at {:#x}",self.breakpoints.len(),parse_res);
+                                self.breakpoints.push(parse_res);
+                                // should we check the breakpoint already in the vector?
+                                if self.inferior.is_some(){
+                                    if let Err(_) = self.inferior.as_mut().unwrap().append_breakpoint(parse_res){
+                                        println!("Add breakpoint failed, clean INT at {:#x}",parse_res);
+                                        self.breakpoints.pop();
+                                    }
+                                }
+                            }
+                        } else{
+                            println!("fail to parse addr {} as usize",&args[0]);
+                        }
                     }
                 }
             }
