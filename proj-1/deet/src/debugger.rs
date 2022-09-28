@@ -1,7 +1,9 @@
 use crate::debugger_command::DebuggerCommand;
 use crate::inferior::Inferior;
+use nix::sys::wait::waitpid;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
+use crate::inferior::Status;
 
 pub struct Debugger {
     target: String,
@@ -32,18 +34,83 @@ impl Debugger {
         loop {
             match self.get_next_command() {
                 DebuggerCommand::Run(args) => {
+                    if self.inferior.is_some(){
+                        //1. first kill n reap it
+                        self.inferior
+                            .as_mut()
+                            .unwrap()
+                            .kill();
+                        //2. finally clean it
+                        self.inferior = None
+                    }
                     if let Some(inferior) = Inferior::new(&self.target, &args) {
                         // Create the inferior
                         self.inferior = Some(inferior);
                         // TODO (milestone 1): make the inferior run
                         // You may use self.inferior.as_mut().unwrap() to get a mutable reference
                         // to the Inferior object
+                        let cont_res = self.inferior.as_mut().unwrap().cont();
+                        match cont_res {
+                            Ok(v) => {
+                                match v {
+                                    Status::Exited(_status_code) => {
+                                        self.inferior = None; // to make kill normal
+                                        println!("Child exited (status {})",_status_code);
+                                    }
+                                    Status::Stopped(_signal,_rip) => {
+                                        println!("Child stopped (signal {:?})",_signal);
+                                    }
+                                    _ => {
+                                        println!("Child send unknown information");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("Child continue makes error:{:?}", e);
+                            }
+                        }
                     } else {
                         println!("Error starting subprocess");
                     }
                 }
                 DebuggerCommand::Quit => {
+                    if self.inferior.is_some(){
+                        //1. first kill n reap it
+                        self.inferior
+                            .as_mut()
+                            .unwrap()
+                            .kill();
+                        //2. finally clean it
+                        self.inferior = None
+                    }
                     return;
+                }
+                DebuggerCommand::Cont => {
+                    // 1. check whether process is running
+                    if let None = self.inferior{
+                        println!("Err: no process is running yet");
+                    } else{
+                        // 2. resume the child
+                        let my_continue_res = self.inferior.as_mut().unwrap().cont();
+                        match my_continue_res {
+                            Ok(v) => {
+                                match v {
+                                    Status::Exited(_status_code) => {
+                                        println!("Child exited (status {})",_status_code);
+                                    }
+                                    Status::Stopped(_signal,_rip) => {
+                                        println!("Child stopped (signal {:?})",_signal);
+                                    }
+                                    _ => {
+                                        println!("Child send unknown information");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("Child continue makes error:{:?}", e);
+                            }
+                        }
+                    }
                 }
             }
         }

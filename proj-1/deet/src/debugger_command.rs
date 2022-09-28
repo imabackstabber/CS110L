@@ -1,5 +1,6 @@
 pub enum DebuggerCommand {
     Quit,
+    Cont,
     Run(Vec<String>),
 }
 
@@ -7,6 +8,7 @@ impl DebuggerCommand {
     pub fn from_tokens(tokens: &Vec<&str>) -> Option<DebuggerCommand> {
         match tokens[0] {
             "q" | "quit" => Some(DebuggerCommand::Quit),
+            "c" | "cont" | "continue" => Some(DebuggerCommand::Cont), // return continue
             "r" | "run" => {
                 let args = tokens[1..].to_vec();
                 Some(DebuggerCommand::Run(
