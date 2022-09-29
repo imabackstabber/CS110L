@@ -40,3 +40,44 @@ while(true){
     // ...
 }
 ```
+
+#### Milestone 7
+没什么好说的
+
+#### WrapUp
+代码写太丑了:
+```rust
+DebuggerCommand::BreakPoint(args) => {
+    if args.len() > 1{
+        println!("<usage>: b/break *addr/symbol");
+    } else{
+        let addr = &args[0];
+        if addr.starts_with("*"){
+            if let Some(parse_res) = _parse_address(&addr[1..]){
+                self.add_breakpint(parse_res);
+            }
+        } else{
+            let addr = &args[0];
+            // 1. if it's function name
+            if let Some(parse_res) = self.debug_data.get_addr_for_function(None, addr){
+                self.add_breakpint(parse_res);
+            } else {
+                // 2. if it can be a line number
+                match addr.parse::<usize>().ok(){
+                    Some(addr_u) => {
+                        if let Some(parse_res) = self.debug_data.get_addr_for_line(None, addr_u){
+                            self.add_breakpint(parse_res);
+                        } else{
+                            println!("fail to parse addr {} as function or usize",&args[0]);
+                        }
+                    }
+                    None => {
+                        println!("fail to parse addr {} as function or usize",&args[0]);
+                    }
+                }
+            }
+        }
+    }
+}
+```
+什么时候去优化一下逻辑结构吧
