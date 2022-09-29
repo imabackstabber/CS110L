@@ -142,26 +142,48 @@ impl Debugger {
                 }
                 DebuggerCommand::BreakPoint(args) => {
                     if args.len() > 1{
-                        println!("<usage>: b/break *addr");
+                        println!("<usage>: b/break *addr/symbol");
                     } else{
                         let addr = &args[0];
                         if addr.starts_with("*"){
                             if let Some(parse_res) = _parse_address(&addr[1..]){
-                                println!("Set breakpoint {} at {:#x}",self.breakpoints.len(),parse_res);
-                                self.breakpoints.push(parse_res);
-                                // should we check the breakpoint already in the vector?
-                                if self.inferior.is_some(){
-                                    if let Err(_) = self.inferior.as_mut().unwrap().append_breakpoint(parse_res){
-                                        println!("Add breakpoint failed, clean INT at {:#x}",parse_res);
-                                        self.breakpoints.pop();
+                                self.add_breakpint(parse_res);
+                            }
+                        } else{
+                            let addr = &args[0];
+                            // 1. if it's function name
+                            if let Some(parse_res) = self.debug_data.get_addr_for_function(None, addr){
+                                self.add_breakpint(parse_res);
+                            } else {
+                                // 2. if it can be a line number
+                                match addr.parse::<usize>().ok(){
+                                    Some(addr_u) => {
+                                        if let Some(parse_res) = self.debug_data.get_addr_for_line(None, addr_u){
+                                            self.add_breakpint(parse_res);
+                                        } else{
+                                            println!("fail to parse addr {} as function or usize",&args[0]);
+                                        }
+                                    }
+                                    None => {
+                                        println!("fail to parse addr {} as function or usize",&args[0]);
                                     }
                                 }
                             }
-                        } else{
-                            println!("fail to parse addr {} as usize",&args[0]);
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn add_breakpint(&mut self, parse_res:usize) {
+        println!("Set breakpoint {} at {:#x}",self.breakpoints.len(),parse_res);
+        self.breakpoints.push(parse_res);
+        // should we check the breakpoint already in the vector?
+        if self.inferior.is_some(){
+            if let Err(_) = self.inferior.as_mut().unwrap().append_breakpoint(parse_res){
+                println!("Add breakpoint failed, clean INT at {:#x}",parse_res);
+                self.breakpoints.pop();
             }
         }
     }
