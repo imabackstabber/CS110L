@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use nix::sys::ptrace;
 use nix::sys::signal;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -36,6 +37,7 @@ const INT_CODE:u8 = 0xcc as u8;
 #[derive(Debug)]
 pub struct Inferior {
     child: Child,
+    breakpoints: HashMap<usize, u8>,
 }
 
 fn _align_addr_to_word(addr: usize) -> usize {
@@ -59,7 +61,9 @@ impl Inferior {
     }
 
     pub fn append_breakpoint(&mut self, addr:usize) -> Result<u8, nix::Error>{
-        return self.write_byte(addr,INT_CODE);
+        let orig_byte = self.write_byte(addr,INT_CODE)?;
+        self.breakpoints.insert(addr, orig_byte);
+        Ok(orig_byte)
     }
     /// Attempts to start a new inferior process. Returns Some(Inferior) if successful, or None if
     /// an error is encountered.
@@ -68,12 +72,17 @@ impl Inferior {
         let cmd = _binding.args(args);
         unsafe { cmd.pre_exec(child_traceme);}
         let child = cmd.spawn().ok()?;
-        let mut res = Inferior{child};
+        let mut res = Inferior{child, breakpoints: HashMap::new()};
         if res.wait(Some(WaitPidFlag::WSTOPPED)).is_ok(){
             for (i,brk) in breakpoints.iter().enumerate(){
-                if let Err(_) = Inferior::write_byte(&mut res, *brk, INT_CODE){
-                    println!("Error when injecting breakpoint {}",i);
-                    return None;
+                match Inferior::write_byte(&mut res, *brk, INT_CODE){
+                    Err(_) => {
+                        println!("Error when injecting breakpoint {}, addr {}",i, brk);
+                        return None;
+                    }
+                    Ok(v) => {
+                        res.breakpoints.insert(*brk,v);
+                    }
                 }
             }
             Some(res)
@@ -83,6 +92,27 @@ impl Inferior {
     }
 
     pub fn cont(&mut self) -> Result<Status, nix::Error>{
+        let mut regs = ptrace::getregs(self.pid()).unwrap();
+        let rip = regs.rip as usize;
+        if let Some(orig_byte) = self.breakpoints.get(&(rip-1)){
+            // 1. restore and rewind
+            self.write_byte(rip-1, *orig_byte)?;
+            regs.rip -= 1;
+            ptrace::setregs(self.pid(),regs)?;
+            // 2. step and wait
+            ptrace::step(self.pid(), None)?;
+            match self.wait(None)?{
+                Status::Exited(exit_code) => return Ok(Status::Exited(exit_code)),
+                Status::Signaled(signal) => return Ok(Status::Signaled(signal)),
+                Status::Stopped(signal, _rip) => {
+                    if signal == signal::SIGTRAP {
+                        self.write_byte(rip-1, INT_CODE)?;
+                    } else{
+                        println!("SINGLESTEP return a unknown signal {}", signal);
+                    }
+                }
+            }
+        }
         // continue
         ptrace::cont(self.pid(), None)?;
         self.wait(None)

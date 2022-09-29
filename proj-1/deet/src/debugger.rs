@@ -114,7 +114,6 @@ impl Debugger {
                 DebuggerCommand::Quit => {
                     if self.inferior.is_some(){
                         //1. first kill n reap it
-                        println!("self.infer is {:?}",self.inferior);
                         self.inferior
                             .as_mut()
                             .unwrap()
