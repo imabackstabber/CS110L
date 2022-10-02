@@ -9,4 +9,5 @@ required because of the requirements on the impl of `Send` for `&F`
 Q:目前的问题是怎么阻止closure拿走外部vec的所有权？ 
 A:不要在closure里尝试使用vec，instead采用第二个channel发送函数结果
 Q:然后是使得output vec能够排序？
-A:
+A:Give it redundancy. 因为Manual里说你预先知道了input_vec的结果，所以你也知道output_vec的大小
+那么我们提前填入U::default()，之后，sender发送origin num时也发送下标，and that's it！
