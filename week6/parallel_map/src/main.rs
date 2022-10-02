@@ -9,6 +9,30 @@ where
 {
     let mut output_vec: Vec<U> = Vec::with_capacity(input_vec.len());
     // TODO: implement parallel map!
+    let (sender, receiver):(crossbeam_channel::Sender<(_,_)>, crossbeam_channel::Receiver<(_,_)>) = crossbeam_channel::unbounded();
+    let (final_sender, final_receiver):(crossbeam_channel::Sender<U>, crossbeam_channel::Receiver<U>) = crossbeam_channel::unbounded();
+    let mut threads = vec![];
+    for _ in 0..num_threads{
+        let receiver: crossbeam_channel::Receiver<(T,F)> = receiver.clone();
+        let final_sender: crossbeam_channel::Sender<U> = final_sender.clone();
+        threads.push(thread::spawn(move || {
+            while let Ok((next_num,f)) = receiver.recv(){
+                final_sender.send(f(next_num)).expect("Tried writing [res] to channel, but there are no receivers!");
+            }
+            drop(final_sender); // time to close it
+        }))
+    }
+    for num in input_vec{
+        sender.send((num,f.clone())).expect("Tried writing [(num,f)] to channel, but there are no receivers!");
+    }
+    drop(sender);
+    drop(final_sender);
+    for thread in threads {
+        thread.join().expect("Panic occurred in thread");
+    }
+    while let Ok(res) = final_receiver.recv(){
+        output_vec.push(res)
+    }
     output_vec
 }
 
