@@ -9,29 +9,33 @@ where
 {
     let mut output_vec: Vec<U> = Vec::with_capacity(input_vec.len());
     // TODO: implement parallel map!
-    let (sender, receiver):(crossbeam_channel::Sender<(_,_)>, crossbeam_channel::Receiver<(_,_)>) = crossbeam_channel::unbounded();
-    let (final_sender, final_receiver):(crossbeam_channel::Sender<U>, crossbeam_channel::Receiver<U>) = crossbeam_channel::unbounded();
+    let orig_size = input_vec.len();
+    for _ in 0..orig_size{
+        output_vec.push(U::default());
+    }
+    let (sender, receiver):(crossbeam_channel::Sender<(_,_)>, crossbeam_channel::Receiver<(_,_)>) = crossbeam_channel::unbounded(); // T,U
+    let (final_sender, final_receiver):(crossbeam_channel::Sender<(_,_)>, crossbeam_channel::Receiver<(_,_)>) = crossbeam_channel::unbounded(); // usize, U
     let mut threads = vec![];
     for _ in 0..num_threads{
-        let receiver: crossbeam_channel::Receiver<(T,F)> = receiver.clone();
-        let final_sender: crossbeam_channel::Sender<U> = final_sender.clone();
+        let receiver: crossbeam_channel::Receiver<((usize,T),F)> = receiver.clone();
+        let final_sender: crossbeam_channel::Sender<(usize, U)> = final_sender.clone();
         threads.push(thread::spawn(move || {
-            while let Ok((next_num,f)) = receiver.recv(){
-                final_sender.send(f(next_num)).expect("Tried writing [res] to channel, but there are no receivers!");
+            while let Ok(((idx, next_num),f)) = receiver.recv(){
+                final_sender.send((idx, f(next_num))).expect("Tried writing [res] to channel, but there are no receivers!");
             }
             drop(final_sender); // time to close it
         }))
     }
-    for num in input_vec{
-        sender.send((num,f.clone())).expect("Tried writing [(num,f)] to channel, but there are no receivers!");
+    for idx in (0..orig_size).rev() {
+        sender.send(((idx, input_vec.pop().unwrap()),f.clone())).expect("Tried writing [(num,f)] to channel, but there are no receivers!");
     }
     drop(sender);
     drop(final_sender);
     for thread in threads {
         thread.join().expect("Panic occurred in thread");
     }
-    while let Ok(res) = final_receiver.recv(){
-        output_vec.push(res)
+    while let Ok((idx,res)) = final_receiver.recv(){
+        output_vec[idx] = res;
     }
     output_vec
 }
