@@ -20,3 +20,6 @@ future模型，抑或是被js称作promise，是另一种异步编程模型
 需要注意的是我们仍然传一个Arc(shared_state_ref)，只不过我们需要获取的锁仅仅加在一个成员变量上
 我们仍然可以通过获取这个锁，调用lock的lock()方法对成员变量进行改写
 '这是因为我们从未改变锁本身以及其monitor的对象'，所以也不存在破坏了shared_state_ref的读状态一说法
+#### Milestone 4
+很明显，我们另外开一个线程，heartbeat
+还需要明白主动检测的工作模式，是要先发一个请求给path，然后再读回response，根据response的内容来判断服务器是否down

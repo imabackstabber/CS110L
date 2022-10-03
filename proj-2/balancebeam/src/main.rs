@@ -6,6 +6,8 @@ use rand::{Rng, SeedableRng};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::delay_for;
 
 /// Contains information parsed from the command-line invocation of balancebeam. The Clap macros
 /// provide a fancy way to automatically construct a command-line argument parser.
@@ -98,6 +100,10 @@ async fn main() {
         alive_addresses: Mutex::new((upstream_len, vec![1;upstream_len])),
     };
     let shared_state = Arc::new(state); // we will only read it, so no Mutex is needed
+    let shared_state_ref = shared_state.clone();
+    tokio::spawn(async move{
+        activate_health_check(&shared_state_ref).await;
+    });
     loop {
         if let Ok((stream,_)) = listener.accept().await{
             let shared_state_ref = shared_state.clone();
@@ -106,6 +112,67 @@ async fn main() {
             });
         } else{
             break;
+        }
+    }
+}
+
+async fn connect_server_helper(upstream:&str) -> Result<TcpStream,()>{
+    match TcpStream::connect(upstream).await{
+        Ok(v) => {return Ok(v);}
+        Err(_) => {
+            log::error!("can't connect to server {}", upstream);
+            return Err(());
+        }
+    }
+}
+
+async fn shakehand_with_upstream(upstream:&str, path:&str) -> Result<(),()>{
+    let mut stream = connect_server_helper(upstream).await?;
+    let request = http::Request::builder()
+        .method(http::Method::GET)
+        .uri(path)
+        .header("Host", upstream)
+        .body(Vec::new())
+        .unwrap();
+    let _ = match request::write_to_stream(&request, &mut stream).await{
+        Ok(v) => Ok(v),
+        Err(_) => Err(())
+    };
+    match response::read_from_stream(&mut stream, &http::Method::GET).await{
+        Ok(v) if v.status().as_u16() == 200 => {
+            Ok(())
+        }
+        _ => {
+            Err(())
+        }
+    }
+}
+
+async fn activate_health_check(state: &ProxyState){
+    let interval = state.active_health_check_interval;
+    let tot = state.upstream_addresses.len();
+    loop{
+        delay_for(Duration::from_secs(interval as u64)).await;
+        let mut lock_ret = state.alive_addresses.lock().await;
+        for i in 0..tot{
+            match shakehand_with_upstream(&state.upstream_addresses[i], &state.active_health_check_path).await{
+                Ok(_) => {
+                    // is it marked `failed` before?
+                    if lock_ret.1[i] == 0{
+                        log::debug!("active check gets alive server {}:{}",i,state.upstream_addresses[i]);
+                        lock_ret.1[i] = 1;
+                        lock_ret.0 += 1;
+                    }
+                }
+                Err(_) => {
+                    // is it marked `available` before?
+                    if lock_ret.1[i] != 0{
+                        log::debug!("active check gets down server {}:{}",i,state.upstream_addresses[i]);
+                        lock_ret.1[i] = 0;
+                        lock_ret.0 -= 1;
+                    }
+                }
+            }
         }
     }
 }
