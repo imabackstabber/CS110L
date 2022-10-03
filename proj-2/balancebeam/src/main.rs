@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::delay_for;
+use std::collections::HashMap;
 
 /// Contains information parsed from the command-line invocation of balancebeam. The Clap macros
 /// provide a fancy way to automatically construct a command-line argument parser.
@@ -61,6 +62,7 @@ struct ProxyState {
     upstream_addresses: Vec<String>,
     /// Tuple recording alive server number and table
     alive_addresses: Mutex<(usize, Vec<usize>)>, 
+    rate_limiter: Mutex<HashMap<String,usize>>,
 }
 
 #[tokio::main] // compiler yelled:'`main` fn is not allowed to be async'
@@ -98,11 +100,16 @@ async fn main() {
         active_health_check_path: options.active_health_check_path,
         max_requests_per_minute: options.max_requests_per_minute,
         alive_addresses: Mutex::new((upstream_len, vec![1;upstream_len])),
+        rate_limiter: Mutex::new(HashMap::new()),
     };
     let shared_state = Arc::new(state); // we will only read it, so no Mutex is needed
-    let shared_state_ref = shared_state.clone();
+    let shared_state_ref_chekcer = shared_state.clone();
     tokio::spawn(async move{
-        activate_health_check(&shared_state_ref).await;
+        activate_health_check(&shared_state_ref_chekcer).await;
+    });
+    let shared_state_ref_refresher = shared_state.clone();
+    tokio::spawn(async move{
+       refresh_rate_limiter(&shared_state_ref_refresher).await;
     });
     loop {
         if let Ok((stream,_)) = listener.accept().await{
@@ -113,6 +120,14 @@ async fn main() {
         } else{
             break;
         }
+    }
+}
+
+async fn refresh_rate_limiter(state: &ProxyState){
+    loop {
+        delay_for(Duration::from_secs(60 as u64)).await;
+        let mut rate_limiter = state.rate_limiter.lock().await;
+        rate_limiter.clear();
     }
 }
 
@@ -214,6 +229,18 @@ async fn send_response(client_conn: &mut TcpStream, response: &http::Response<Ve
     }
 }
 
+async fn check_rate_limiter(ipaddr:&str, state: &ProxyState) -> Result<(),()>{
+    let mut rate_limiter = state.rate_limiter.lock().await;
+    let key = String::from(ipaddr);
+    let cnt = rate_limiter.entry(key).or_insert(0);
+    if state.max_requests_per_minute > 0 && *cnt >= state.max_requests_per_minute{
+        return Err(())
+    }
+    *cnt += 1;
+    log::debug!("addr: {}, count: {}", ipaddr, cnt);
+    Ok(())
+}
+
 async fn handle_connection(mut client_conn: TcpStream, state: &ProxyState) {
     let client_ip = client_conn.peer_addr().unwrap().ip().to_string();
     log::info!("Connection received from {}", client_ip);
@@ -265,6 +292,12 @@ async fn handle_connection(mut client_conn: TcpStream, state: &ProxyState) {
             upstream_ip,
             request::format_request_line(&request)
         );
+        // Process rate limit
+        if let Err(_e) =  check_rate_limiter(&client_ip,state).await{
+            let response = response::make_http_error(http::StatusCode::TOO_MANY_REQUESTS);
+            send_response(&mut client_conn, &response).await;
+            continue;
+        }
 
         // Add X-Forwarded-For header so that the upstream server knows the client's IP address.
         // (We're the ones connecting directly to the upstream server, so without this header, the
